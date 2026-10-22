@@ -7,25 +7,28 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Extrair projeto
         run: |
           if [ -f TermuxLauncher.zip ]; then
-            unzip -o TermuxLauncher.zip
-            if [ -d TermuxLauncher ]; then
-              cp -r TermuxLauncher/. .
-              rm -rf TermuxLauncher
-            fi
+            unzip -q -o TermuxLauncher.zip -d _proj
           fi
-          ls -la
-          test -f settings.gradle.kts
+          echo "== arquivos Gradle encontrados =="
+          find . -maxdepth 4 \( -name 'settings.gradle*' -o -name 'gradlew' \) -not -path './.git/*'
+          SETTINGS=$(find . -maxdepth 4 -name 'settings.gradle*' -not -path './.git/*' | head -n1)
+          if [ -z "$SETTINGS" ]; then
+            echo "ERRO: settings.gradle(.kts) nao encontrado. Estrutura:"
+            find . -maxdepth 3 -not -path './.git/*' | head -80
+            exit 1
+          fi
+          echo "PROJECT_DIR=$(dirname "$SETTINGS")" >> "$GITHUB_ENV"
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '17'
           distribution: 'temurin'
@@ -39,37 +42,24 @@ jobs:
           mv $HOME/android-sdk/cmdline-tools/cmdline-tools $HOME/android-sdk/cmdline-tools/latest
 
           echo "ANDROID_HOME=$HOME/android-sdk" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$HOME/android-sdk" >> $GITHUB_ENV
           echo "$HOME/android-sdk/cmdline-tools/latest/bin" >> $GITHUB_PATH
           echo "$HOME/android-sdk/platform-tools" >> $GITHUB_PATH
 
-          yes | $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --licenses || true
-          $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager \
-            "platform-tools" \
-            "platforms;android-34" \
-            "build-tools;34.0.0"
+          SDKM=$HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager
+          yes | $SDKM --licenses > /dev/null || true
+          $SDKM "platform-tools" "platforms;android-34" "platforms;android-35" "build-tools;34.0.0"
 
-      - name: Preparar Gradle
-        run: |
-          chmod +x gradlew 2>/dev/null || true
-          mkdir -p gradle/wrapper
-          if [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
-            curl -sL -o gradle/wrapper/gradle-wrapper.jar \
-              https://github.com/gradle/gradle/raw/v8.5.0/gradle/wrapper/gradle-wrapper.jar
-          fi
-          if [ ! -f gradle/wrapper/gradle-wrapper.properties ]; then
-            printf '%s\n' \
-              'distributionBase=GRADLE_USER_HOME' \
-              'distributionPath=wrapper/dists' \
-              'distributionUrl=https\://services.gradle.org/distributions/gradle-8.5-bin.zip' \
-              'zipStoreBase=GRADLE_USER_HOME' \
-              'zipStorePath=wrapper/dists' \
-              > gradle/wrapper/gradle-wrapper.properties
-          fi
+      - name: Set up Gradle (caso nao exista gradlew)
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.5'
 
       - name: Build debug APK
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          export ANDROID_HOME=$HOME/android-sdk
-          if [ -x ./gradlew ]; then
+          if [ -f ./gradlew ]; then
+            chmod +x ./gradlew
             ./gradlew assembleDebug --no-daemon --stacktrace
           else
             gradle assembleDebug --no-daemon --stacktrace
@@ -79,6 +69,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: TermuxLauncher-debug
-          path: app/build/outputs/apk/debug/*.apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
           retention-days: 14
           if-no-files-found: warn
