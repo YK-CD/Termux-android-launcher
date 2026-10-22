@@ -30,14 +30,23 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: 'tools platform-tools platforms;android-34 build-tools;34.0.0'
-
-      - name: Aceitar licenças
+      - name: Install Android SDK (manual)
         run: |
-          yes | sdkmanager --licenses || true
+          mkdir -p $HOME/android-sdk/cmdline-tools
+          curl -sL -o /tmp/cmdtools.zip \
+            https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          unzip -q /tmp/cmdtools.zip -d $HOME/android-sdk/cmdline-tools
+          mv $HOME/android-sdk/cmdline-tools/cmdline-tools $HOME/android-sdk/cmdline-tools/latest
+
+          echo "ANDROID_HOME=$HOME/android-sdk" >> $GITHUB_ENV
+          echo "$HOME/android-sdk/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "$HOME/android-sdk/platform-tools" >> $GITHUB_PATH
+
+          yes | $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0"
 
       - name: Preparar Gradle
         run: |
@@ -48,24 +57,23 @@ jobs:
               https://github.com/gradle/gradle/raw/v8.5.0/gradle/wrapper/gradle-wrapper.jar
           fi
           if [ ! -f gradle/wrapper/gradle-wrapper.properties ]; then
-            cat > gradle/wrapper/gradle-wrapper.properties << 'PROP'
-          distributionBase=GRADLE_USER_HOME
-          distributionPath=wrapper/dists
-          distributionUrl=https\://services.gradle.org/distributions/gradle-8.5-bin.zip
-          zipStoreBase=GRADLE_USER_HOME
-          zipStorePath=wrapper/dists
-          PROP
+            printf '%s\n' \
+              'distributionBase=GRADLE_USER_HOME' \
+              'distributionPath=wrapper/dists' \
+              'distributionUrl=https\://services.gradle.org/distributions/gradle-8.5-bin.zip' \
+              'zipStoreBase=GRADLE_USER_HOME' \
+              'zipStorePath=wrapper/dists' \
+              > gradle/wrapper/gradle-wrapper.properties
           fi
 
       - name: Build debug APK
         run: |
+          export ANDROID_HOME=$HOME/android-sdk
           if [ -x ./gradlew ]; then
             ./gradlew assembleDebug --no-daemon --stacktrace
           else
             gradle assembleDebug --no-daemon --stacktrace
           fi
-        env:
-          ANDROID_HOME: ${{ env.ANDROID_HOME }}
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
